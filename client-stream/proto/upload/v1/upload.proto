@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package upload.v1;
+
+option go_package = "github.com/tkh/go-grpc-examples/client-stream/gen/upload/v1;uploadv1";
+
+service UploadService {
+  rpc UploadFile(stream UploadFileRequest) returns (UploadFileResponse) {}
+}
+
+// File upload request which contains either file metadata or a chunk.
+message UploadFileRequest {
+  oneof data {
+    Metadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+// Metadata about the file being uploaded.
+message Metadata {
+  string filename = 1;
+  int64 size = 2;
+}
+
+// The response returned after upload is complete.
+message UploadFileResponse {
+  string id = 1;
+  string filename = 2;
+  int64 size = 3;
+}
