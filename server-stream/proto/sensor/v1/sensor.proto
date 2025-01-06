@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package sensor.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/tkh/go-grpc-examples/server-stream/gen/sensor/v1;sensorv1";
+
+service SensorService {
+  rpc StreamSensorData(StreamSensorDataRequest) returns (stream StreamSensorDataResponse) {}
+}
+
+// Request to stream a specific sensor's data.
+message StreamSensorDataRequest {
+  string sensor_id = 1;
+}
+
+// Timestamped sensor data.
+message StreamSensorDataResponse {
+  float temperature = 1;
+  float humidity = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
