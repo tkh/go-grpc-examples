@@ -69,16 +69,16 @@ func main() {
 		log.Fatalf("failed to ensure upload directory: %v", err)
 	}
 
-	srv := newServer(cfg.addr)
+	srv := newServer(cfg.addr, cfg.uploadsDir)
 	if err := runServer(ctx, srv, cfg.shutdownTimeout); err != nil {
 		slog.ErrorContext(ctx, "run server error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func newServer(addr string) *http.Server {
+func newServer(addr string, uploadsDir string) *http.Server {
 	mux := http.NewServeMux()
-	path, handler := uploadv1connect.NewUploadServiceHandler(server.NewUploadServer())
+	path, handler := uploadv1connect.NewUploadServiceHandler(server.NewUploadServer(uploadsDir))
 	mux.Handle(path, handler)
 
 	return &http.Server{

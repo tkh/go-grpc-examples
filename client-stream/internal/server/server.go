@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,15 +18,9 @@ import (
 
 // Configuration constants.
 const (
-	defaultUploadsDir  = "uploads"        // Default directory for storing uploaded files.
 	artificialDelay    = time.Millisecond // Simulated network latency for demonstration.
 	defaultPermissions = 0o755            // Default Unix permissions for created directories.
 	defaultContextTime = 30 * time.Second // Default timeout for file operations.
-)
-
-// Configuration flags.
-var (
-	uploadsDir = flag.String("uploads-dir", defaultUploadsDir, "Directory for storing uploaded files")
 )
 
 // Domain-specific errors.
@@ -37,20 +30,24 @@ var (
 )
 
 // UploadServer handles file upload requests.
-type UploadServer struct{}
+type UploadServer struct {
+	uploadsDir string
+}
 
 // NewUploadServer creates a new upload server instance.
-func NewUploadServer() *UploadServer {
-	return &UploadServer{}
+func NewUploadServer(uploadsDir string) *UploadServer {
+	return &UploadServer{
+		uploadsDir: uploadsDir,
+	}
 }
 
 // ensureUploadsDir creates the uploads directory if it doesn't exist.
-func ensureUploadsDir() error {
-	if _, err := os.Stat(*uploadsDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(*uploadsDir, defaultPermissions); err != nil {
+func (s *UploadServer) ensureUploadsDir() error {
+	if _, err := os.Stat(s.uploadsDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(s.uploadsDir, defaultPermissions); err != nil {
 			return fmt.Errorf("creating uploads directory: %w", err)
 		}
-		slog.Info("uploads directory created", "path", *uploadsDir)
+		slog.Info("uploads directory created", "path", s.uploadsDir)
 	}
 	return nil
 }
@@ -62,7 +59,7 @@ func (s *UploadServer) UploadFile(
 ) (*connect.Response[uploadv1.UploadFileResponse], error) {
 	slog.Info("starting file upload", "header", stream.RequestHeader())
 
-	if err := ensureUploadsDir(); err != nil {
+	if err := s.ensureUploadsDir(); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("ensuring uploads directory: %w", err))
 	}
 
@@ -87,7 +84,7 @@ func (s *UploadServer) UploadFile(
 				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("generating file ID: %w", err))
 			}
 
-			if file, err = createFile(fileID); err != nil {
+			if file, err = s.createFile(fileID); err != nil {
 				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("creating file: %w", err))
 			}
 			defer file.Close()
@@ -122,23 +119,23 @@ func (s *UploadServer) UploadFile(
 		select {
 		case err := <-errCh:
 			if err != nil {
-				cleanupFile(ctx, fileID)
+				s.cleanupFile(ctx, fileID)
 				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("writing chunk: %w", err))
 			}
 		case <-writeCtx.Done():
-			cleanupFile(ctx, fileID)
+			s.cleanupFile(ctx, fileID)
 			return nil, connect.NewError(connect.CodeDeadlineExceeded, fmt.Errorf("write operation timed out"))
 		}
 	}
 
 	if err := stream.Err(); err != nil {
-		cleanupFile(ctx, fileID)
+		s.cleanupFile(ctx, fileID)
 
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("processing stream: %w", err))
 	}
 
 	if totalBytes != metadata.GetSize() {
-		cleanupFile(ctx, fileID)
+		s.cleanupFile(ctx, fileID)
 
 		return nil, connect.NewError(
 			connect.CodeDataLoss,
@@ -164,13 +161,13 @@ func newFileID() (string, error) {
 }
 
 // createFile creates a new file in the uploads directory.
-func createFile(fileID string) (*os.File, error) {
-	return os.Create(filepath.Join(*uploadsDir, fileID))
+func (s *UploadServer) createFile(fileID string) (*os.File, error) {
+	return os.Create(filepath.Join(s.uploadsDir, fileID))
 }
 
 // cleanupFile removes a file from the uploads directory.
-func cleanupFile(ctx context.Context, fileID string) {
-	err := os.Remove(filepath.Join(*uploadsDir, fileID))
+func (s *UploadServer) cleanupFile(ctx context.Context, fileID string) {
+	err := os.Remove(filepath.Join(s.uploadsDir, fileID))
 	if err != nil {
 		slog.ErrorContext(ctx, "file cleanup failed", "fileID", fileID)
 	}
