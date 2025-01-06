@@ -19,6 +19,23 @@ import (
 	"github.com/tkh/go-grpc-examples/client-stream/internal/server"
 )
 
+func main() {
+	cfg := parseFlags()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := ensureUploadDir(ctx, cfg.uploadsDir); err != nil {
+		log.Fatalf("failed to ensure upload directory: %v", err)
+	}
+
+	srv := newServer(cfg.addr, cfg.uploadsDir)
+	if err := runServer(ctx, srv, cfg.shutdownTimeout); err != nil {
+		slog.ErrorContext(ctx, "run server error", "error", err)
+		os.Exit(1)
+	}
+}
+
 const defaultShutdownTimeout = 5 * time.Second
 
 type config struct {
@@ -50,30 +67,16 @@ func parseFlags() *config {
 		os.Exit(1)
 	}
 
-	// Clean and validate uploads directory path
-	cfg.uploadsDir = filepath.Clean(cfg.uploadsDir)
-	if filepath.IsAbs(cfg.uploadsDir) && !strings.HasPrefix(cfg.uploadsDir, os.TempDir()) {
-		log.Printf("Warning: Using absolute path outside of temp directory: %s", cfg.uploadsDir)
-	}
-
+	cfg.uploadsDir = validateUploadsDir(cfg.uploadsDir)
 	return cfg
 }
 
-func main() {
-	cfg := parseFlags()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := ensureUploadDir(ctx, cfg.uploadsDir); err != nil {
-		log.Fatalf("failed to ensure upload directory: %v", err)
+func validateUploadsDir(dir string) string {
+	dir = filepath.Clean(dir)
+	if filepath.IsAbs(dir) && !strings.HasPrefix(dir, os.TempDir()) {
+		log.Printf("Warning: Using absolute path outside of temp directory: %s", dir)
 	}
-
-	srv := newServer(cfg.addr, cfg.uploadsDir)
-	if err := runServer(ctx, srv, cfg.shutdownTimeout); err != nil {
-		slog.ErrorContext(ctx, "run server error", "error", err)
-		os.Exit(1)
-	}
+	return dir
 }
 
 func newServer(addr string, uploadsDir string) *http.Server {

@@ -15,6 +15,39 @@ import (
 	"github.com/tkh/go-grpc-examples/client-stream/internal/client"
 )
 
+func main() {
+	cfg := parseFlags()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := createTestFile(cfg.fileName, int(cfg.fileSize)); err != nil {
+		log.Fatalf("failed to create example file for upload: %v", err)
+	}
+
+	defer func() {
+		if err := os.Remove(cfg.fileName); err != nil {
+			log.Printf("warning: failed to clean up example file: %v", err)
+		} else {
+			log.Printf("cleaned up example file: %s", cfg.fileName)
+		}
+	}()
+
+	uploadClient, err := client.NewUploadClient(
+		http.DefaultClient,
+		cfg.serverURL,
+		cfg.chunkSize,
+		cfg.progressFreq,
+	)
+	if err != nil {
+		log.Fatalf("failed to create upload client: %v", err)
+	}
+
+	if err := uploadClient.UploadFile(ctx, cfg.fileName); err != nil {
+		log.Fatalf("file upload failed: %v\nMake sure the server is running with: go run cmd/server/main.go", err)
+	}
+}
+
 const (
 	KB = 1024
 	MB = KB * 1024
@@ -33,50 +66,6 @@ type config struct {
 	progressFreq time.Duration
 	serverURL    string
 	fileName     string
-}
-
-func parseFlags() *config {
-	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [flags]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "A client that uploads a test file to the server using gRPC streaming.\n\n")
-		fmt.Fprintf(os.Stderr, "Flags:\n")
-		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nSize units supported: KB, MB, GB, TB (case insensitive)\n")
-		fmt.Fprintf(os.Stderr, "Examples:\n")
-		fmt.Fprintf(os.Stderr, "client -size 500KB\n")
-		fmt.Fprintf(os.Stderr, "client -size 1GB -chunk-size 65536 -progress-freq 500ms -server-url http://example.com:8080\n")
-	}
-
-	cfg := &config{
-		fileSize:     ByteSize(100 * MB), // default to 100MB
-		chunkSize:    defaultChunkSize,
-		progressFreq: defaultProgressUpdateFreq,
-		serverURL:    defaultServerURL,
-		fileName:     defaultFileName,
-	}
-
-	fs.Var(&cfg.fileSize, "size", "Size of test file to create (e.g., 100MB, 1GB)")
-	fs.IntVar(&cfg.chunkSize, "chunk-size", defaultChunkSize, "Size of each upload chunk in bytes")
-	fs.DurationVar(&cfg.progressFreq, "progress-freq", defaultProgressUpdateFreq, "Minimum time between progress updates")
-	fs.StringVar(&cfg.serverURL, "server-url", defaultServerURL, "URL of the upload server")
-	fs.StringVar(&cfg.fileName, "file-name", defaultFileName, "Name of the test file to create")
-
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		fs.Usage()
-		os.Exit(1)
-	}
-
-	// Validate configuration
-	if cfg.chunkSize <= 0 {
-		log.Fatalf("chunk size must be positive")
-	}
-
-	if _, err := url.Parse(cfg.serverURL); err != nil {
-		log.Fatalf("invalid server URL: %v", err)
-	}
-
-	return cfg
 }
 
 type ByteSize int
@@ -115,36 +104,49 @@ func (b *ByteSize) Set(value string) error {
 	return nil
 }
 
-func main() {
-	cfg := parseFlags()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := createTestFile(cfg.fileName, int(cfg.fileSize)); err != nil {
-		log.Fatalf("failed to create example file for upload: %v", err)
-	}
-	// Ensure we clean up the file even if upload fails
-	defer func() {
-		if err := os.Remove(cfg.fileName); err != nil {
-			log.Printf("warning: failed to clean up example file: %v", err)
-		} else {
-			log.Printf("cleaned up example file: %s", cfg.fileName)
-		}
-	}()
-
-	uploadClient, err := client.NewUploadClient(
-		http.DefaultClient,
-		cfg.serverURL,
-		cfg.chunkSize,
-		cfg.progressFreq,
-	)
-	if err != nil {
-		log.Fatalf("failed to create upload client: %v", err)
+func parseFlags() *config {
+	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "A client that uploads a test file to the server using gRPC streaming.\n\n")
+		fmt.Fprintf(os.Stderr, "Flags:\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nSize units supported: KB, MB, GB, TB (case insensitive)\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "client -size 500KB\n")
+		fmt.Fprintf(os.Stderr, "client -size 1GB -chunk-size 65536 -progress-freq 500ms -server-url http://example.com:8080\n")
 	}
 
-	if err := uploadClient.UploadFile(ctx, cfg.fileName); err != nil {
-		log.Fatalf("file upload failed: %v\nMake sure the server is running with: go run cmd/server/main.go", err)
+	cfg := &config{
+		fileSize:     ByteSize(100 * MB),
+		chunkSize:    defaultChunkSize,
+		progressFreq: defaultProgressUpdateFreq,
+		serverURL:    defaultServerURL,
+		fileName:     defaultFileName,
+	}
+
+	fs.Var(&cfg.fileSize, "size", "Size of test file to create (e.g., 100MB, 1GB)")
+	fs.IntVar(&cfg.chunkSize, "chunk-size", defaultChunkSize, "Size of each upload chunk in bytes")
+	fs.DurationVar(&cfg.progressFreq, "progress-freq", defaultProgressUpdateFreq, "Minimum time between progress updates")
+	fs.StringVar(&cfg.serverURL, "server-url", defaultServerURL, "URL of the upload server")
+	fs.StringVar(&cfg.fileName, "file-name", defaultFileName, "Name of the test file to create")
+
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	validateConfig(cfg)
+	return cfg
+}
+
+func validateConfig(cfg *config) {
+	if cfg.chunkSize <= 0 {
+		log.Fatalf("chunk size must be positive")
+	}
+
+	if _, err := url.Parse(cfg.serverURL); err != nil {
+		log.Fatalf("invalid server URL: %v", err)
 	}
 }
 
